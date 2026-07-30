@@ -53,6 +53,7 @@ class _AddTransactionViewState extends State<AddTransactionView> {
     _amountController = TextEditingController(
       text: tx != null ? formatter.format(tx.amount.toInt()) : '',
     );
+    _amountController.addListener(_onAmountChanged);
     _descriptionController = TextEditingController(text: tx?.description ?? '');
     _selectedDate = tx?.date ?? DateTime.now();
     _selectedCategoryId = tx?.categoryId;
@@ -104,8 +105,13 @@ class _AddTransactionViewState extends State<AddTransactionView> {
     }
   }
 
+  void _onAmountChanged() {
+    setState(() {});
+  }
+
   @override
   void dispose() {
+    _amountController.removeListener(_onAmountChanged);
     _amountController.dispose();
     _descriptionController.dispose();
     super.dispose();
@@ -284,6 +290,24 @@ class _AddTransactionViewState extends State<AddTransactionView> {
   Widget build(BuildContext context) {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
     final provider = Provider.of<FinanceProvider>(context);
+
+    final selectedAccount = provider.accounts.firstWhere(
+      (a) => a.id == _selectedAccountId,
+      orElse: () => Account(id: '', name: '', balance: 0.0, colorCode: 0),
+    );
+
+    double inputAmount = 0.0;
+    if (_amountController.text.isNotEmpty) {
+      final cleanVal = _amountController.text.replaceAll(RegExp(r'[^0-9]'), '');
+      inputAmount = double.tryParse(cleanVal) ?? 0.0;
+    }
+
+    double remainingBalance = selectedAccount.balance;
+    if (_selectedType == 'expense' || _selectedType == 'transfer') {
+      remainingBalance = selectedAccount.balance - inputAmount;
+    } else if (_selectedType == 'income') {
+      remainingBalance = selectedAccount.balance + inputAmount;
+    }
 
     // Filter categories by type
     final filteredCats = provider.categories.where(
@@ -468,6 +492,43 @@ class _AddTransactionViewState extends State<AddTransactionView> {
                 ),
                 
                 const Divider(height: 1, thickness: 1.5),
+                if (selectedAccount.id.isNotEmpty) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Saldo saat ini: ${CurrencyHelper.format(selectedAccount.balance)}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: isDark ? AppTheme.darkTextSecondary : AppTheme.lightTextSecondary,
+                        ),
+                      ),
+                      if (inputAmount > 0)
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.arrow_forward_rounded,
+                              size: 14,
+                              color: isDark ? Colors.grey[600] : Colors.grey[400],
+                            ),
+                            const SizedBox(width: 4),
+                            Text(
+                              'Sisa: ${CurrencyHelper.format(remainingBalance)}',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: remainingBalance < 0 
+                                    ? AppTheme.expenseColor 
+                                    : (_selectedType == 'income' ? AppTheme.incomeColor : (isDark ? Colors.white70 : Colors.black87)),
+                              ),
+                            ),
+                          ],
+                        ),
+                    ],
+                  ),
+                ],
                 const SizedBox(height: 24),
 
                 // 3. Source Wallet Picker

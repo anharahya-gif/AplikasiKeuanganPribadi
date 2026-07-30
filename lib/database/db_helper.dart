@@ -2,6 +2,8 @@ import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:uuid/uuid.dart';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
+import 'dart:io';
 import '../models/account_model.dart';
 import '../models/category_model.dart';
 import '../models/transaction_model.dart';
@@ -476,5 +478,112 @@ class DbHelper {
       where: 'id = ?',
       whereArgs: [id],
     );
+  }
+
+  // --- BACKUP & RESTORE UTILITIES ---
+
+  // Get the path of the backup file in application documents directory
+  Future<String> getBackupDatabasePath() async {
+    final directory = await getApplicationDocumentsDirectory();
+    return join(directory.path, 'backups', 'personal_finance_backup.db');
+  }
+
+  // Check if a backup file exists in the application documents directory
+  Future<bool> hasBackupFile() async {
+    try {
+      final path = await getBackupDatabasePath();
+      return await File(path).exists();
+    } catch (e) {
+      debugPrint('Error checking backup file existence: $e');
+      return false;
+    }
+  }
+
+  // Get details (modification date and size) of the backup file
+  Future<Map<String, dynamic>?> getBackupFileDetails() async {
+    try {
+      final path = await getBackupDatabasePath();
+      final file = File(path);
+      if (await file.exists()) {
+        final stat = await file.stat();
+        return {
+          'lastModified': stat.modified,
+          'size': stat.size,
+        };
+      }
+    } catch (e) {
+      debugPrint('Error getting backup file details: $e');
+    }
+    return null;
+  }
+
+  // Verify if a file is a valid SQLite 3 database file
+  Future<bool> isValidSqliteFile(File file) async {
+    try {
+      if (!await file.exists()) return false;
+      final bytes = await file.openRead(0, 16).first;
+      if (bytes.length < 16) return false;
+      final header = String.fromCharCodes(bytes.take(15));
+      return header == "SQLite format 3" && bytes[15] == 0;
+    } catch (e) {
+      debugPrint('Error validating SQLite file: $e');
+      return false;
+    }
+  }
+
+  // Safe backup of active database to backups directory
+  Future<bool> backupDatabase() async {
+    try {
+      final dbPath = await getDatabasePath();
+      final backupPath = await getBackupDatabasePath();
+      
+      // Close database to ensure all writes are flushed
+      await closeDatabase();
+      
+      final dbFile = File(dbPath);
+      if (await dbFile.exists()) {
+        final backupFile = File(backupPath);
+        // Ensure backups directory exists
+        await backupFile.parent.create(recursive: true);
+        await dbFile.copy(backupPath);
+        
+        // Reopen database connection
+        await database;
+        return true;
+      }
+      return false;
+    } catch (e) {
+      debugPrint('Error backing up database: $e');
+      // Attempt to reopen database if closed
+      await database;
+      return false;
+    }
+  }
+
+  // Safe restore of database from backups directory
+  Future<bool> restoreDatabase() async {
+    try {
+      final dbPath = await getDatabasePath();
+      final backupPath = await getBackupDatabasePath();
+      
+      final backupFile = File(backupPath);
+      if (await backupFile.exists()) {
+        // Close database first to unlock the file
+        await closeDatabase();
+        
+        final dbFile = File(dbPath);
+        await backupFile.copy(dbPath);
+        
+        // Reopen database connection
+        await database;
+        return true;
+      }
+      return false;
+    } catch (e) {
+      debugPrint('Error restoring database: $e');
+      // Attempt to reopen database if closed
+      await database;
+      return false;
+    }
   }
 }

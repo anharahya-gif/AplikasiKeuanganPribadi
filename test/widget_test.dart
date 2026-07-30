@@ -1,30 +1,121 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
-import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-
+import 'package:provider/provider.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:aplikasi_keuangan_pribadi/main.dart';
+import 'package:aplikasi_keuangan_pribadi/providers/finance_provider.dart';
+import 'package:aplikasi_keuangan_pribadi/providers/security_provider.dart';
+import 'package:intl/date_symbol_data_local.dart';
+import 'dart:convert';
+
+// Fake provider to bypass SQLite and path_provider calls in tests
+class FakeFinanceProvider extends FinanceProvider {
+  FakeFinanceProvider() : super();
+
+  @override
+  Future<void> refreshData() async {
+    // No-op to bypass DB calls in unit test environment
+  }
+}
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  TestWidgetsFlutterBinding.ensureInitialized();
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+  setUpAll(() async {
+    await initializeDateFormatting('id_ID', null);
+    
+    // Disable Google Fonts HTTP fetching in tests
+    GoogleFonts.config.allowRuntimeFetching = false;
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+    // Mock flutter/assets channel to return mock bytes for font files or empty manifests
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMessageHandler('flutter/assets', (ByteData? message) async {
+      if (message == null) return null;
+      
+      // Decode the asset key from the byte message using proper offset and length
+      final String key = utf8.decode(
+        message.buffer.asUint8List(message.offsetInBytes, message.lengthInBytes),
+      );
+      
+      if (key.endsWith('.ttf') || key.contains('google_fonts')) {
+        // Return dummy bytes for font files
+        return ByteData.sublistView(Uint8List.fromList(List<int>.filled(100, 0)));
+      }
+      
+      if (key.startsWith('AssetManifest')) {
+        // Return a mock manifest containing the font files to make google_fonts think they are bundled assets
+        final manifestMap = <String, List<String>>{
+          'google_fonts/PlusJakartaSans-ExtraBold.ttf': ['google_fonts/PlusJakartaSans-ExtraBold.ttf'],
+          'google_fonts/PlusJakartaSans-Bold.ttf': ['google_fonts/PlusJakartaSans-Bold.ttf'],
+          'google_fonts/PlusJakartaSans-SemiBold.ttf': ['google_fonts/PlusJakartaSans-SemiBold.ttf'],
+          'google_fonts/PlusJakartaSans-Regular.ttf': ['google_fonts/PlusJakartaSans-Regular.ttf'],
+        };
+        return const StandardMessageCodec().encodeMessage(manifestMap);
+      }
+      
+      return null; // Return file not found for other assets
+    });
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    // Mock path_provider channel
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+      const MethodChannel('plugins.flutter.io/path_provider'),
+      (MethodCall methodCall) async {
+        return '.';
+      },
+    );
+
+    // Mock shared_preferences channel
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+      const MethodChannel('plugins.flutter.io/shared_preferences'),
+      (MethodCall methodCall) async {
+        if (methodCall.method == 'getAll') {
+          return <String, dynamic>{};
+        }
+        return null;
+      },
+    );
+
+    // Mock sqflite channel
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+      const MethodChannel('com.tekartik.sqflite'),
+      (MethodCall methodCall) async {
+        if (methodCall.method == 'getDatabasesPath') {
+          return '.';
+        }
+        if (methodCall.method == 'openDatabase') {
+          return 1;
+        }
+        return null;
+      },
+    );
+
+    // Mock font_loader channel to bypass engine-level TTF parsing errors
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+      const MethodChannel('flutter/font_loader'),
+      (MethodCall methodCall) async {
+        return null; // Force success
+      },
+    );
+  });
+
+  testWidgets('App initialization smoke test', (WidgetTester tester) async {
+    final securityProvider = SecurityProvider();
+    
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<FinanceProvider>(create: (_) => FakeFinanceProvider()),
+          ChangeNotifierProvider.value(value: securityProvider),
+        ],
+        child: const MyApp(),
+      ),
+    );
+
+    // Verify that the app is initialized successfully
+    expect(find.byType(MyApp), findsOneWidget);
   });
 }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
+import 'dart:io';
 import '../models/account_model.dart';
 import '../models/category_model.dart';
 import '../models/transaction_model.dart';
@@ -17,7 +18,7 @@ class FinanceProvider with ChangeNotifier {
   String? _selectedAccountId;
   String? _selectedCategoryId;
   String _searchQuery = '';
-
+  Map<String, dynamic>? _localBackupDetails;
   bool _isLoading = false;
 
   // Getters
@@ -30,6 +31,7 @@ class FinanceProvider with ChangeNotifier {
   String? get selectedAccountId => _selectedAccountId;
   String? get selectedCategoryId => _selectedCategoryId;
   String get searchQuery => _searchQuery;
+  Map<String, dynamic>? get localBackupDetails => _localBackupDetails;
   bool get isLoading => _isLoading;
 
   // Constructor
@@ -47,6 +49,7 @@ class FinanceProvider with ChangeNotifier {
       _categories = await DbHelper.instance.getAllCategories();
       _transactions = await DbHelper.instance.getAllTransactions();
       _budgets = await DbHelper.instance.getBudgetsByMonth(currentMonthStr);
+      _localBackupDetails = await DbHelper.instance.getBackupFileDetails();
 
       final applied = await _checkAndApplyAdminFees();
       if (applied) {
@@ -376,5 +379,51 @@ class FinanceProvider with ChangeNotifier {
       }
     }
     return didApplyAny;
+  }
+
+  // --- BACKUP & RESTORE WRAPPERS ---
+
+  // Create local backup
+  Future<bool> createLocalBackup() async {
+    final success = await DbHelper.instance.backupDatabase();
+    if (success) {
+      await refreshData();
+    }
+    return success;
+  }
+
+  // Restore from local backup
+  Future<bool> restoreFromLocalBackup() async {
+    final success = await DbHelper.instance.restoreDatabase();
+    if (success) {
+      await refreshData();
+    }
+    return success;
+  }
+
+  // Import external database file with validation
+  Future<bool> importDatabase(String pickedPath) async {
+    try {
+      final pickedFile = File(pickedPath);
+      final isValid = await DbHelper.instance.isValidSqliteFile(pickedFile);
+      if (!isValid) return false;
+
+      // Close current DB
+      await DbHelper.instance.closeDatabase();
+
+      // Copy picked file to main DB path
+      final dbPath = await DbHelper.instance.getDatabasePath();
+      await pickedFile.copy(dbPath);
+
+      // Reopen database connection & reload data
+      await DbHelper.instance.database;
+      await refreshData();
+      return true;
+    } catch (e) {
+      debugPrint('Error importing database: $e');
+      // Make sure database is reopened if closed
+      await DbHelper.instance.database;
+      return false;
+    }
   }
 }

@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:intl/intl.dart';
 import '../providers/security_provider.dart';
 import '../providers/finance_provider.dart';
 import '../theme/app_theme.dart';
@@ -82,146 +83,337 @@ class SettingsView extends StatelessWidget {
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: isDark ? AppTheme.darkSurface : Colors.white,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppTheme.radiusL),
-        ),
-        title: const Text('Cadangkan & Pulihkan Data', style: TextStyle(fontWeight: FontWeight.bold)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Gunakan fitur ini untuk mengekspor database keuangan Anda atau mengimpor file backup sebelumnya.',
-              style: TextStyle(fontSize: 12.5, color: Colors.grey),
-            ),
-            const SizedBox(height: 20),
-            
-            // Backup button
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.primaryColor,
-                foregroundColor: Colors.white,
-                minimumSize: const Size(double.infinity, 48),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              icon: const Icon(Icons.share_outlined, size: 18),
-              label: const Text('Cadangkan Data (Ekspor)', style: TextStyle(fontWeight: FontWeight.bold)),
-              onPressed: () async {
-                Navigator.pop(context); // Close dialog
-                try {
-                  final dbPath = await DbHelper.instance.getDatabasePath();
-                  final file = File(dbPath);
-                  
-                  if (await file.exists()) {
-                    await Share.shareXFiles(
-                      [XFile(dbPath)],
-                      text: 'Backup KeuanganKu - ${DateHelper.formatSimple(DateTime.now())}',
-                    );
-                  } else {
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('File database tidak ditemukan!')),
-                      );
-                    }
-                  }
-                } catch (e) {
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('Gagal melakukan backup: $e')),
-                    );
-                  }
-                }
-              },
-            ),
-            const SizedBox(height: 12),
-            
-            // Restore button
-            OutlinedButton.icon(
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppTheme.primaryColor,
-                minimumSize: const Size(double.infinity, 48),
-                side: const BorderSide(color: AppTheme.primaryColor),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              icon: const Icon(Icons.file_open_outlined, size: 18),
-              label: const Text('Pulihkan Data (Impor)', style: TextStyle(fontWeight: FontWeight.bold)),
-              onPressed: () async {
-                Navigator.pop(context); // Close dialog
-                
-                // Confirm dialog
-                final confirm = await showDialog<bool>(
-                  context: context,
-                  builder: (context) => AlertDialog(
-                    title: const Text('Pulihkan Data?'),
-                    content: const Text('PERINGATAN: Memulihkan data akan menimpa seluruh data keuangan Anda saat ini dengan file backup pilihan Anda. Proses ini tidak dapat dibatalkan.'),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(context, false),
-                        child: const Text('Batal'),
-                      ),
-                      ElevatedButton(
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppTheme.expenseColor,
-                          foregroundColor: Colors.white,
-                        ),
-                        onPressed: () => Navigator.pop(context, true),
-                        child: const Text('Pulihkan'),
-                      ),
-                    ],
-                  ),
-                );
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            final backupDetails = financeProvider.localBackupDetails;
+            final bool hasLocalBackup = backupDetails != null;
 
-                if (confirm == true) {
-                  try {
-                    final result = await FilePicker.pickFiles(
-                      type: FileType.any,
-                    );
+            return AlertDialog(
+              backgroundColor: isDark ? AppTheme.darkSurface : Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppTheme.radiusL),
+              ),
+              title: const Row(
+                children: [
+                  Icon(Icons.backup_outlined, color: AppTheme.primaryColor),
+                  SizedBox(width: 10),
+                  Text('Cadangkan & Pulihkan', style: TextStyle(fontWeight: FontWeight.bold)),
+                ],
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // PART 1: LOCAL BACKUP
+                    Text(
+                      'CADANGAN LOKAL (FOLDER TERPISAH)',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.primaryColor,
+                        letterSpacing: 1.1,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Menyimpan salinan database di folder dokumen aplikasi agar aman jika database utama terhapus/rusak.',
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                    const SizedBox(height: 12),
                     
-                    if (result != null && result.files.single.path != null) {
-                      final pickedPath = result.files.single.path!;
-                      
-                      // Close current DB
-                      await DbHelper.instance.closeDatabase();
-                      
-                      // Overwrite DB file
-                      final dbPath = await DbHelper.instance.getDatabasePath();
-                      final backupFile = File(pickedPath);
-                      await backupFile.copy(dbPath);
-                      
-                      // Reload provider
-                      await financeProvider.refreshData();
-                      
-                      if (context.mounted) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Data berhasil dipulihkan dengan sukses!')),
-                        );
-                      }
-                    }
-                  } catch (e) {
-                    if (context.mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('Gagal memulihkan data: $e')),
-                      );
-                    }
-                  }
-                }
-              },
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Tutup'),
-          ),
-        ],
-      ),
+                    // Backup status box
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: hasLocalBackup 
+                            ? Colors.green.withOpacity(0.08) 
+                            : Colors.orange.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: hasLocalBackup 
+                              ? Colors.green.withOpacity(0.2) 
+                              : Colors.orange.withOpacity(0.2),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            hasLocalBackup ? Icons.check_circle_rounded : Icons.warning_amber_rounded,
+                            color: hasLocalBackup ? Colors.green : Colors.orange,
+                            size: 24,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  hasLocalBackup ? 'Cadangan Lokal Tersedia' : 'Belum Ada Cadangan',
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13.5,
+                                    color: hasLocalBackup ? Colors.green : Colors.orange,
+                                  ),
+                                ),
+                                if (hasLocalBackup) ...[
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    'Waktu: ${DateHelper.formatSimple(backupDetails['lastModified'] as DateTime)} ${DateFormat('HH:mm').format(backupDetails['lastModified'] as DateTime)}',
+                                    style: const TextStyle(fontSize: 11.5, color: Colors.grey),
+                                  ),
+                                  Text(
+                                    'Ukuran: ${((backupDetails['size'] as int) / 1024).toStringAsFixed(1)} KB',
+                                    style: const TextStyle(fontSize: 11.5, color: Colors.grey),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppTheme.primaryColor,
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                            ),
+                            onPressed: () async {
+                              final success = await financeProvider.createLocalBackup();
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(
+                                    content: Text(success 
+                                        ? 'Cadangan lokal berhasil dibuat!' 
+                                        : 'Gagal membuat cadangan lokal!'),
+                                  ),
+                                );
+                              }
+                              setStateDialog(() {});
+                            },
+                            child: const Text('Cadangkan', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: OutlinedButton(
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: AppTheme.primaryColor,
+                              side: BorderSide(
+                                color: hasLocalBackup ? AppTheme.primaryColor : Colors.grey.withOpacity(0.3),
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                            ),
+                            onPressed: !hasLocalBackup ? null : () async {
+                              final confirm = await showDialog<bool>(
+                                context: context,
+                                builder: (context) => AlertDialog(
+                                  title: const Text('Pulihkan Cadangan Lokal?'),
+                                  content: const Text('PERINGATAN: Seluruh data saat ini akan ditimpa oleh data cadangan lokal Anda. Tindakan ini tidak dapat dibatalkan.'),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(context, false),
+                                      child: const Text('Batal'),
+                                    ),
+                                    ElevatedButton(
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: AppTheme.expenseColor,
+                                        foregroundColor: Colors.white,
+                                      ),
+                                      onPressed: () => Navigator.pop(context, true),
+                                      child: const Text('Pulihkan'),
+                                    ),
+                                  ],
+                                ),
+                              );
+
+                              if (confirm == true) {
+                                final success = await financeProvider.restoreFromLocalBackup();
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(success 
+                                          ? 'Data berhasil dipulihkan dari cadangan lokal!' 
+                                          : 'Gagal memulihkan data!'),
+                                    ),
+                                  );
+                                  Navigator.pop(context); // Close backup dialog
+                                }
+                              }
+                            },
+                            child: const Text('Pulihkan', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                          ),
+                        ),
+                      ],
+                    ),
+                    
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 16),
+                      child: Divider(),
+                    ),
+                    
+                    // PART 2: EXTERNAL EXPORT/IMPORT
+                    Text(
+                      'EKSPOR & IMPOR EKSTERNAL',
+                      style: GoogleFonts.plusJakartaSans(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.bold,
+                        color: AppTheme.primaryColor,
+                        letterSpacing: 1.1,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    const Text(
+                      'Ekspor database ke file luar untuk dipindahkan ke HP lain, atau impor file database eksternal.',
+                      style: TextStyle(fontSize: 12, color: Colors.grey),
+                    ),
+                    const SizedBox(height: 12),
+                    
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: const Color(0xFF3F3D56),
+                              foregroundColor: Colors.white,
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                            ),
+                            icon: const Icon(Icons.upload_file_rounded, size: 16),
+                            label: const Text('Ekspor', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                            onPressed: () async {
+                              try {
+                                final dbPath = await DbHelper.instance.getDatabasePath();
+                                final file = File(dbPath);
+                                
+                                if (await file.exists()) {
+                                  await SharePlus.instance.share(
+                                    ShareParams(
+                                      files: [XFile(dbPath)],
+                                      text: 'Cadangan Database KeuanganKu - ${DateHelper.formatSimple(DateTime.now())}',
+                                    ),
+                                  );
+                                } else {
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(content: Text('File database utama tidak ditemukan!')),
+                                    );
+                                  }
+                                }
+                              } catch (e) {
+                                if (context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(content: Text('Gagal mengekspor data: $e')),
+                                  );
+                                }
+                              }
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: const Color(0xFF3F3D56),
+                              side: const BorderSide(color: Color(0xFF3F3D56)),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+                            ),
+                            icon: const Icon(Icons.file_open_outlined, size: 16),
+                            label: const Text('Impor', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                            onPressed: () async {
+                              final confirm = await showDialog<bool>(
+                                context: context,
+                                builder: (context) => AlertDialog(
+                                  title: const Text('Impor File Database?'),
+                                  content: const Text('PERINGATAN: Memilih file database eksternal akan menimpa seluruh data saat ini. Pastikan file yang diimpor adalah file database KeuanganKu yang valid.'),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(context, false),
+                                      child: const Text('Batal'),
+                                    ),
+                                    ElevatedButton(
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: AppTheme.expenseColor,
+                                        foregroundColor: Colors.white,
+                                      ),
+                                      onPressed: () => Navigator.pop(context, true),
+                                      child: const Text('Impor'),
+                                    ),
+                                  ],
+                                ),
+                              );
+
+                              if (confirm == true) {
+                                try {
+                                  final result = await FilePicker.pickFiles(
+                                    type: FileType.any,
+                                  );
+                                  
+                                  if (result != null && result.files.single.path != null) {
+                                    final pickedPath = result.files.single.path!;
+                                    
+                                    final success = await financeProvider.importDatabase(pickedPath);
+                                    if (context.mounted) {
+                                      if (success) {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(content: Text('Database berhasil diimpor dengan sukses!')),
+                                        );
+                                        Navigator.pop(context); // Close backup dialog
+                                      } else {
+                                        ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                            content: Text('Gagal impor: File yang dipilih bukan database SQLite KeuanganKu yang valid!'),
+                                            backgroundColor: Colors.red,
+                                          ),
+                                        );
+                                      }
+                                    }
+                                  }
+                                } catch (e) {
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(content: Text('Terjadi kesalahan: $e')),
+                                    );
+                                  }
+                                }
+                              }
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Tutup'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
